@@ -27,7 +27,7 @@
     { key: 'SAT', label: 'SAT — Site Acceptance Test' },
     { key: 'QHSE', label: 'QHSE — Annexure-SCT-HR-001' }
   ];
-  const NOTE_CATS = ['SQL', 'OPC DA/UA', 'Modbus TCP/RTU', 'Networking', 'Wonderware / AVEVA', 'General'];
+  const NOTE_CATS = ['SQL', 'OPC DA/UA', 'Modbus TCP/RTU', 'QuickScript', 'Networking', 'Wonderware / AVEVA', 'General'];
   const STORES = ['projects', 'actions', 'bom', 'team', 'hours', 'blockers', 'qhse', 'docs', 'notes'];
   const TITLES = {
     dashboard: 'Dashboard & Scope WBS',
@@ -40,6 +40,8 @@
   const LS_PROJECT = 'scopetracker.currentProject';
   const LS_SEEDED = 'scopetracker.seeded';
   const LS_INSTALL_DISMISS = 'scopetracker.installDismissed';
+  const LS_TOUR = 'scopetracker.tourSeen';
+  const LS_SEED_V2 = 'scopetracker.seedV2';
 
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
@@ -57,12 +59,34 @@
   const phaseOf = (key) => PHASES.find((p) => p.key === key);
   const phaseShort = (key) => (phaseOf(key) ? phaseOf(key).short : 'Unphased');
   const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  const stepsOf = (a) => (Array.isArray(a.steps) ? a.steps : []);
+  function copyText(text) {
+    const fallback = () => {
+      try {
+        const t = document.createElement('textarea');
+        t.value = text; t.setAttribute('readonly', ''); t.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+        document.body.appendChild(t); t.select();
+        const ok = document.execCommand('copy');
+        t.remove();
+        return !!ok;
+      } catch (e) { return false; }
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text).then(() => true).catch(() => fallback());
+    return Promise.resolve(fallback());
+  }
 
   /* =====================================================================
      2. State & persistence (IndexedDB with localStorage mirror)
      ===================================================================== */
   const S = { projects: [], actions: [], bom: [], team: [], hours: [], blockers: [], qhse: [], docs: [], notes: [] };
-  const UI = { view: 'dashboard', projectId: null, q: '', phase: '', assignee: '', status: '', layout: 'kanban', bomStatus: '', noteCat: '' };
+  const UI = { view: 'dashboard', projectId: null, q: '', phase: '', assignee: '', status: '', layout: 'kanban', bomStatus: '', noteCat: '', collapsed: {} };
+
+  function resetFilters(keepSearch) {
+    UI.phase = ''; UI.assignee = ''; UI.status = ''; UI.bomStatus = ''; UI.noteCat = '';
+    if (!keepSearch) { UI.q = ''; const si = $('#globalSearch'); if (si) si.value = ''; }
+  }
+  const tab2Filtered = () => !!(UI.q || UI.phase || UI.assignee || UI.status);
+  const filterNotice = (shown, total) => `<div class="filter-note" role="status"><span>Showing <b>${shown}</b> of <b>${total}</b> actions (Filters active)</span><button type="button" class="link-btn" data-act="clear-filters">Reset All Filters</button></div>`;
   let db = null;
 
   class ScopeTrackerDB {
@@ -179,6 +203,20 @@
     } else {
       mirror();
     }
+    await migrateSeed();
+  }
+
+  // One-time top-up of the protocol / script register for workspaces created by an earlier version.
+  async function migrateSeed() {
+    let done = false;
+    try { done = localStorage.getItem(LS_SEED_V2) === '1'; } catch (e) { /* ignore */ }
+    if (done) return;
+    for (const n of seedNotes()) {
+      if (!S.projects.some((p) => p.id === n.projectId)) continue;
+      if (S.notes.some((x) => x.seed === n.seed || (x.projectId === n.projectId && x.title === n.title))) continue;
+      await save('notes', n);
+    }
+    try { localStorage.setItem(LS_SEED_V2, '1'); } catch (e) { /* ignore */ }
   }
 
   /* =====================================================================
@@ -298,6 +336,33 @@
     }));
   }
 
+  function seedNotes() {
+    const d = (n) => addDays(today(), n);
+    const mk = (seed, projectId, category, title, body, off) => ({ id: uid('note'), seed, projectId, category, title, body, date: d(off) });
+    return [
+      mk('dcp-opc-endpoint', 'prj_dcp', 'OPC DA/UA', 'OPC UA endpoint — Chiller PLC CH-PLC-01',
+        'Endpoint URL : opc.tcp://10.20.30.11:4840\nSecurity     : Basic256Sha256 / Sign & Encrypt\nAuthentication: Username token (svc_scada)\nSampling     : 500 ms   Publishing: 1000 ms\nNode path    : ns=2;s=Chillers.CH01.*\nCertificates : SCADA client cert in the PLC trusted folder; server cert trusted on the Galaxy node.', -8),
+      mk('dcp-modbus-map', 'prj_dcp', 'Modbus TCP/RTU', 'Modbus register map — Chillers & VFD pumps',
+        'Chiller CH-01  Unit 1  10.20.30.11:502 (TCP)\nAddr   Type    Tag                  Scale\n40001  INT16   CH01_ChwSupplyTemp   /10  degC\n40002  INT16   CH01_ChwReturnTemp   /10  degC\n40010  UINT16  CH01_RunStatus       0=Off 1=Run 2=Fault\n40020  UINT32  CH01_kWh             2 regs, big-endian\n\nPump VFDs via serial gateway (RTU 9600 8N1, slaves 5-8)\n30001  UINT16  Pn_SpeedHz           /100\n30002  UINT16  Pn_CurrentA          /10\n\nPoll 1000 ms, timeout 3000 ms, 3 retries.', -5),
+      mk('dcp-modbus-exc', 'prj_dcp', 'Modbus TCP/RTU', 'Exception code 02 (Illegal Data Address) on chiller polling',
+        'Symptom: DAServer logs exception 02 for holding registers 40101-40140.\nCause: OEM map is 0-based, DAServer item is 1-based.\nFix: Offset all addresses by +1 in the device group, then re-validate against the OEM test sheet.', -15),
+      mk('dcp-opc-cert', 'prj_dcp', 'OPC DA/UA', 'OPC UA certificate trust failure',
+        'Symptom: BadCertificateUntrusted when the SCADA client connects to the PLC OPC UA server.\nFix: Move the client certificate from the rejected folder to the trusted folder of the server, and confirm the hostname in the SAN matches the connection URL.', -6),
+      mk('dcp-sql-index', 'prj_dcp', 'SQL', 'Slow trend report — index on timestamp + tag',
+        'Symptom: 24 h chiller report takes 40 s.\nFix: Add a covering index and filter on the clustered column first.\n\nCREATE NONCLUSTERED INDEX IX_Trend_Tag_Time\nON dbo.ChillerTrend (TagName, SampleTime)\nINCLUDE (Value, Quality);\n\nSELECT TagName, AVG(Value) AS AvgValue\nFROM dbo.ChillerTrend\nWHERE SampleTime >= DATEADD(hour, -24, GETDATE())\nGROUP BY TagName;', -3),
+      mk('dcp-quickscript', 'prj_dcp', 'QuickScript', 'QuickScript — chiller start permissive (Galaxy object, While True)',
+        '// Sample logic: start permissive for chiller object\nIF Me.ChwFlowOK AND Me.CwFlowOK AND NOT Me.Fault AND Me.RemoteEnable THEN\n  Me.StartPermissive = TRUE;\nELSE\n  Me.StartPermissive = FALSE;\nENDIF;', -2),
+      mk('jaw-opc-endpoint', 'prj_jaw', 'OPC DA/UA', 'OPC UA endpoint — Booster station PLC',
+        'Endpoint URL : opc.tcp://192.168.50.21:4840\nSecurity     : Basic256Sha256 / Sign & Encrypt\nAuthentication: Certificate + username\nSampling     : 1000 ms\nNode path    : ns=3;s=Booster.Pumps.*\nNote: legacy PLC firmware needs the OPC UA license activated before first connect.', 1),
+      mk('jaw-modbus-map', 'prj_jaw', 'Modbus TCP/RTU', 'Modbus register map — Booster pump skid',
+        'Booster PLC  Unit 1  192.168.50.21:502\nAddr   Type    Tag                 Scale\n40001  UINT16  BP1_DischargePress  /100 bar\n40002  UINT16  BP1_SuctionPress    /100 bar\n40003  UINT16  BP1_FlowM3h         /10\n40010  UINT16  BP1_Status          bit0 Run, bit1 Fault, bit2 Remote\n\nPoll 2000 ms, timeout 3000 ms.', 2),
+      mk('jaw-sql-historian', 'prj_jaw', 'SQL', 'Historian query — 8 h cyclic pressure & flow',
+        "SELECT DateTime, TagName, Value\nFROM Runtime.dbo.History\nWHERE TagName IN ('BP1_Flow', 'BP1_DischargePress')\n  AND DateTime >= DATEADD(hh, -8, GETDATE())\n  AND wwRetrievalMode = 'Cyclic'\n  AND wwResolution = 60000\nORDER BY TagName, DateTime;", 3),
+      mk('jaw-quickscript', 'prj_jaw', 'QuickScript', 'QuickScript — low suction pressure alarm delay',
+        '// Raise alarm only after 10 s of sustained low suction pressure\nIF Me.SuctionPress < Me.LowLimit THEN\n  Me.LowTimer = Me.LowTimer + 1;\nELSE\n  Me.LowTimer = 0;\nENDIF;\nMe.LowSuctionAlarm = (Me.LowTimer >= 10);', 4)
+    ];
+  }
+
   function buildSeed() {
     const t0 = today();
     const d = (n) => addDays(t0, n);
@@ -339,6 +404,10 @@
     kids1[7].priority = 'Critical';
     kids1[8].priority = 'Critical';
     kids1[10].assigneeId = 'tm1';
+    const mkSteps = (list) => list.map((x) => ({ id: uid('stp'), text: x[0], done: x[1] }));
+    kids1[7].steps = mkSteps([['Verify PLC IP address & subnet', true], ['Configure Wonderware OI Server topic', true], ['Import and trust OPC UA certificates', false], ['Test tag read/write quality', false]]);
+    kids1[9].steps = mkSteps([['Map PLC tags to Galaxy attributes', false], ['Run I/O loop check per panel', false], ['Verify fail-safe heartbeat', false], ['Sign off loop-check sheets', false]]);
+    kids1[9].autoProgress = true;
 
     const acts2 = wbsTemplate(p2, team);
     const kids2 = acts2.filter((a) => a.parentId);
@@ -427,23 +496,7 @@
     docs1[0].notes = 'Rev B issued after site survey; client comments closed.';
     const docs2 = docTemplate(p2.id);
 
-    const notes = [
-      {
-        id: uid('note'), projectId: p1.id, category: 'Modbus TCP/RTU', title: 'Exception code 02 (Illegal Data Address) on chiller polling',
-        body: 'Symptom: DAServer logs exception 02 for holding registers 40101-40140.\nCause: OEM map is 0-based, DAServer item is 1-based.\nFix: Offset all addresses by +1 in the device group, then re-validate against the OEM test sheet.',
-        date: d(-15)
-      },
-      {
-        id: uid('note'), projectId: p1.id, category: 'OPC DA/UA', title: 'OPC UA certificate trust failure',
-        body: 'Symptom: BadCertificateUntrusted when the SCADA client connects to the PLC OPC UA server.\nFix: Move the client certificate from the rejected folder to the trusted folder of the server, and confirm the hostname in the SAN matches the connection URL.',
-        date: d(-6)
-      },
-      {
-        id: uid('note'), projectId: p1.id, category: 'SQL', title: 'Slow trend report — index on timestamp + tag',
-        body: "Symptom: 24 h chiller report takes 40 s.\nFix: Add a covering index and filter on the clustered column first.\n\nCREATE NONCLUSTERED INDEX IX_Trend_Tag_Time\nON dbo.ChillerTrend (TagName, SampleTime)\nINCLUDE (Value, Quality);\n\nSELECT TagName, AVG(Value) AS AvgValue\nFROM dbo.ChillerTrend\nWHERE SampleTime >= DATEADD(hour, -24, GETDATE())\nGROUP BY TagName;",
-        date: d(-3)
-      }
-    ];
+    const notes = seedNotes();
 
     return {
       projects: [p1, p2],
@@ -536,6 +589,9 @@
     return matchQ(a.title, a.description, phaseShort(a.phase), as ? as.name : '', a.priority, effStatus(a));
   }
   const matchTree = (a) => matchAction(a) || kidsOf(a.id).some(matchAction);
+  // Dashboard WBS honours only the global search box — never the Actions-tab dropdown filters.
+  const matchSearch = (a) => { const as = member(a.assigneeId); return matchQ(a.title, a.description, phaseShort(a.phase), as ? as.name : '', a.priority, effStatus(a)); };
+  const matchSearchTree = (a) => matchSearch(a) || kidsOf(a.id).some(matchSearch);
 
   function treeRows(acts) {
     const rows = [];
@@ -555,6 +611,12 @@
   const priCls = (s) => `pri-${String(s || 'Medium').toLowerCase()}`;
   const badge = (txt, cls = '') => `<span class="badge ${cls}">${esc(txt)}</span>`;
   const bar = (v, cls = '') => `<div class="bar ${cls}" role="progressbar" aria-valuenow="${pct(v)}" aria-valuemin="0" aria-valuemax="100"><span style="width:${pct(v)}%"></span></div>`;
+const stepPill = (a) => {
+    const st = stepsOf(a);
+    if (!st.length) return '';
+    const d = st.filter((x) => x.done).length;
+    return `<span class="steps-pill${d === st.length ? ' full' : ''}" title="Sub-steps completed">☑ ${d}/${st.length}</span>`;
+  };
   const optList = (list) => list.map((x) => (typeof x === 'string' ? { value: x, label: x } : x));
   const optionsHtml = (list, val, blank) => (blank != null ? `<option value="">${esc(blank)}</option>` : '') + optList(list).map((o) => `<option value="${esc(o.value)}"${String(o.value) === String(val) ? ' selected' : ''}>${esc(o.label)}</option>`).join('');
   const teamOpts = () => S.team.map((t) => ({ value: t.id, label: `${t.name} — ${t.role}` }));
@@ -572,7 +634,7 @@
 
   let lastFocus = null;
   function openModal({ title, body, wide }) {
-    lastFocus = document.activeElement;
+    if (!$('#modalRoot').firstChild) lastFocus = document.activeElement;
     $('#modalRoot').innerHTML = `<div class="modal-backdrop"><div class="modal${wide ? ' wide' : ''}" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
       <div class="modal-head"><h2 id="modalTitle">${esc(title)}</h2><button type="button" class="icon-btn" data-act="modal-close" aria-label="Close">×</button></div>
       <div class="modal-body">${body}</div></div></div>`;
@@ -650,9 +712,10 @@
         <strong>${esc(a.title)}</strong>
         <span class="small muted">${esc(as ? as.name : 'Unassigned')} · ${fmtShort(a.start)} → ${fmtShort(a.end)} · ${hs.logged}/${hs.est} h</span>
       </div>
-      <div class="wbs-meta">${badge(a.priority, priCls(a.priority))}${badge(st, statusCls(st))}</div>
+      <div class="wbs-meta">${badge(a.priority, priCls(a.priority))}${badge(st, statusCls(st))}${stepPill(a)}</div>
       <div class="wbs-prog">${bar(pr, st === 'Blocked' ? 'danger' : '')}<span class="small">${pr}%</span></div>
       <div class="wbs-btns">
+        <button class="btn ghost xs" data-act="steps" data-id="${a.id}" title="Add or check off micro-steps">+ Sub-step</button>
         <button class="btn ghost xs" data-act="decompose" data-id="${a.id}" title="Break into sub-actions">Split</button>
         <button class="btn ghost xs" data-act="edit-action" data-id="${a.id}">Edit</button>
         <button class="btn ghost xs danger-text" data-act="delete-action" data-id="${a.id}">Delete</button>
@@ -663,15 +726,20 @@
   function wbsTree() {
     const acts = projActions();
     if (!acts.length) return `<div class="empty-inline"><p>No actions yet. Break this project down in one click.</p><button class="btn primary" data-act="wbs-template">Auto-Generate SCADA WBS Template</button></div>`;
-    const keys = PHASES.map((p) => p.key).concat(['']);
+    const q = UI.q;
+    const extra = Array.from(new Set(acts.map((x) => x.phase || ''))).filter((k) => !PHASES.some((p) => p.key === k));
+    const keys = PHASES.map((p) => p.key).concat(extra);
     const html = keys.map((key) => {
-      const tops = acts.filter((a) => !a.parentId && (a.phase || '') === key && matchTree(a)).sort((x, y) => x.start.localeCompare(y.start));
+      const allTops = acts.filter((x) => !x.parentId && (x.phase || '') === key);
+      if (!allTops.length) return '';
+      const tops = (q ? allTops.filter(matchSearchTree) : allTops).sort((x, y) => x.start.localeCompare(y.start));
       if (!tops.length) return '';
-      const allTops = acts.filter((a) => !a.parentId && (a.phase || '') === key);
-      const pr = allTops.length ? sum(allTops, effProgress) / allTops.length : 0;
+      const ck = key || '_';
+      const open = q ? true : !UI.collapsed[ck];
+      const pr = sum(allTops, effProgress) / allTops.length;
       const ph = phaseOf(key);
-      return `<section class="phase"><header class="phase-head"><h3>${esc(ph ? ph.name : 'Unphased actions')}</h3><div class="phase-prog">${bar(pr)}<span class="small">${pct(pr)}%</span></div></header>
-        ${tops.map((t) => actionRow(t, 0) + kidsOf(t.id).filter((k) => matchAction(k) || matchAction(t)).sort((x, y) => x.start.localeCompare(y.start)).map((k) => actionRow(k, 1)).join('')).join('')}</section>`;
+      const rows = open ? tops.map((t) => actionRow(t, 0) + kidsOf(t.id).filter((k) => !q || matchSearch(k) || matchSearch(t)).sort((x, y) => x.start.localeCompare(y.start)).map((k) => actionRow(k, 1)).join('')).join('') : '';
+      return `<section class="phase${open ? '' : ' collapsed'}"><header class="phase-head"><button type="button" class="phase-toggle" data-act="toggle-phase" data-key="${ck}" aria-expanded="${open}"><span class="chev" aria-hidden="true">${open ? '▾' : '▸'}</span><h3>${esc(ph ? ph.name : 'Unphased actions')}</h3></button><div class="phase-prog">${bar(pr)}<span class="small">${pct(pr)}%</span></div></header>${rows}</section>`;
     }).join('');
     return html || '<p class="muted">No actions match the current search.</p>';
   }
@@ -715,8 +783,9 @@
 
     <section class="card">
       <div class="card-head"><h2>Scope Work Breakdown Structure</h2>
-        <div class="row"><button class="btn ghost sm" data-act="wbs-template">Auto-Generate SCADA WBS Template</button><button class="btn primary sm" data-act="new-action">+ Add Action</button></div>
+        <div class="row"><button class="btn ghost sm" data-act="phase-all" data-v="open">Expand all</button><button class="btn ghost sm" data-act="phase-all" data-v="close">Collapse all</button><button class="btn ghost sm" data-act="wbs-template">Auto-Generate SCADA WBS Template</button><button class="btn primary sm" data-act="new-action">+ Add Action</button></div>
       </div>
+      ${UI.q ? filterNotice(leafActions().filter(matchSearch).length, leafActions().length) : ''}
       ${wbsTree()}
     </section>`;
   }
@@ -748,11 +817,12 @@
       <h4>${esc(a.title)}</h4>
       ${par ? `<p class="small muted">↳ ${esc(par.title)}</p>` : ''}
       <p class="small">${esc(as ? as.name : 'Unassigned')} · ${fmtShort(a.start)} → ${fmtShort(a.end)}</p>
-      <p class="small muted">${hs.logged}/${hs.est} h logged</p>
+      <p class="small muted">${hs.logged}/${hs.est} h logged ${stepPill(a)}</p>
       <label class="slider"><span>Progress <b data-out>${a.progress}%</b></span>
-        <input type="range" min="0" max="100" step="5" value="${a.progress}" data-input="progress" data-change="progress" data-id="${a.id}" aria-label="Progress for ${esc(a.title)}"></label>
+        <input type="range" min="0" max="100" step="5" value="${a.progress}" data-input="progress" data-change="progress" data-id="${a.id}" aria-label="Progress for ${esc(a.title)}"${a.autoProgress && stepsOf(a).length ? ' disabled title="Auto-calculated from sub-steps"' : ''}></label>
       <div class="kcard-actions">
         <select data-change="action-status" data-id="${a.id}" aria-label="Status">${optionsHtml(ACTION_STATUS, a.status)}</select>
+        <button class="btn ghost xs" data-act="steps" data-id="${a.id}">+ Sub-step</button>
         <button class="btn ghost xs" data-act="decompose" data-id="${a.id}">Split</button>
         <button class="btn ghost xs" data-act="edit-action" data-id="${a.id}">Edit</button>
         <button class="btn ghost xs danger-text" data-act="delete-action" data-id="${a.id}">Del</button>
@@ -801,11 +871,11 @@
         const hs = actHours(a);
         return `<tr class="${level ? 'child' : 'parent'}"><td class="lvl${level}"><strong>${esc(a.title)}</strong></td><td>${esc(phaseShort(a.phase))}</td><td>${esc(as ? as.name : '—')}</td><td>${badge(a.priority, priCls(a.priority))}</td><td>${badge(st, statusCls(st))}</td>
           <td class="nowrap">${bar(effProgress(a))}<span class="small">${effProgress(a)}%</span></td><td class="nowrap">${fmtShort(a.start)} → ${fmtShort(a.end)}</td><td class="nowrap">${hs.logged}/${hs.est}</td>
-          <td class="nowrap"><button class="btn ghost xs" data-act="decompose" data-id="${a.id}">Split</button> <button class="btn ghost xs" data-act="edit-action" data-id="${a.id}">Edit</button> <button class="btn ghost xs danger-text" data-act="delete-action" data-id="${a.id}">Del</button></td></tr>`;
+          <td class="nowrap"><button class="btn ghost xs" data-act="steps" data-id="${a.id}">+ Sub-step</button> <button class="btn ghost xs" data-act="decompose" data-id="${a.id}">Split</button> <button class="btn ghost xs" data-act="edit-action" data-id="${a.id}">Edit</button> <button class="btn ghost xs danger-text" data-act="delete-action" data-id="${a.id}">Del</button></td></tr>`;
       }).join('') || '<tr><td colspan="9" class="muted">No actions match.</td></tr>'}</tbody></table></div>`;
     }
     const ganttRows = treeRows(acts).filter(({ a }) => matchTree(a));
-    return `${filterBar()}${body}<section class="card"><div class="card-head"><h2>Schedule Timeline</h2><span class="muted small">Bars show timeframe; fill shows progress</span></div>${ganttHtml(ganttRows)}</section>`;
+    return `${filterBar()}${tab2Filtered() ? filterNotice(leaves.length, leafActions().length) : ''}${body}<section class="card"><div class="card-head"><h2>Schedule Timeline</h2><span class="muted small">Bars show timeframe; fill shows progress</span></div>${ganttHtml(ganttRows)}</section>`;
   }
 
   function viewBom() {
@@ -924,10 +994,10 @@
     </div>
     <div class="qa-grid">${qaCards}</div>
 
-    <section class="card"><div class="card-head"><h2>Protocol, OPC & SQL Troubleshooting Log</h2>
+    <section class="card"><div class="card-head"><div><h2>SQL Queries, Wonderware Scripts & OPC/Modbus Communication Log</h2><p class="small muted">Save PLC IPs, OPC UA endpoints, Modbus register ranges, QuickScripts and SQL snippets — copy any entry in one click.</p></div>
       <div class="row"><select data-change="filter" data-key="noteCat" aria-label="Category">${optionsHtml(NOTE_CATS, UI.noteCat, 'All categories')}</select><button class="btn primary sm" data-act="new-note">+ Add Note</button></div></div>
       <div class="notes">${notes.map((n) => `<article class="note"><header><h4>${esc(n.title)}</h4><div class="row">${badge(n.category, 'phase')}<span class="small muted">${fmtShort(n.date)}</span></div></header><pre>${esc(n.body)}</pre>
-        <div class="row"><button class="btn ghost xs" data-act="edit-note" data-id="${n.id}">Edit</button><button class="btn ghost xs danger-text" data-act="delete-note" data-id="${n.id}">Delete</button></div></article>`).join('') || '<p class="muted">No notes match.</p>'}</div></section>`;
+        <div class="row"><button class="btn primary xs" data-act="copy-note" data-id="${n.id}">Copy Snippet/Config</button><button class="btn ghost xs" data-act="edit-note" data-id="${n.id}">Edit</button><button class="btn ghost xs danger-text" data-act="delete-note" data-id="${n.id}">Delete</button></div></article>`).join('') || '<p class="muted">No notes match.</p>'}</div></section>`;
   }
 
   /* =====================================================================
@@ -984,6 +1054,7 @@
         await save('projects', rec);
         if (!editing) {
           UI.projectId = rec.id;
+          resetFilters(true);
           localStorage.setItem(LS_PROJECT, rec.id);
           for (const q of qaTemplate(rec.id)) await save('qhse', q);
           for (const x of docTemplate(rec.id)) await save('docs', x);
@@ -1033,6 +1104,7 @@
         else if (d.progress === 100) d.status = 'Completed';
         else if (d.progress > 0 && d.status === 'Backlog') d.status = 'In Progress';
         const rec = Object.assign({}, editing ? a : { id: uid('act'), projectId: p.id }, d);
+        syncSteps(rec);
         await save('actions', rec);
         toast(editing ? 'Action updated.' : 'Action added.', 'ok');
       }
@@ -1244,6 +1316,7 @@
         await replaceAll(data);
       }
       if (!S.projects.some((p) => p.id === UI.projectId)) UI.projectId = (S.projects[0] || {}).id || null;
+      resetFilters(true);
       render();
       toast('Import complete.', 'ok');
     } catch (e) {
@@ -1294,10 +1367,248 @@
   /* =====================================================================
      10. Event handlers
      ===================================================================== */
+  /* ---------- Sub-steps (micro-step checklists) ---------- */
+  function syncSteps(rec) {
+    const st = stepsOf(rec);
+    if (!rec.autoProgress || !st.length || hasKids(rec.id)) return;
+    rec.progress = pct((st.filter((x) => x.done).length / st.length) * 100);
+    if (rec.progress === 100) rec.status = 'Completed';
+    else if (rec.status === 'Completed') rec.status = 'In Progress';
+    else if (rec.progress > 0 && rec.status === 'Backlog') rec.status = 'In Progress';
+  }
+
+  function openSteps(id, keep) {
+    const a = S.actions.find((x) => x.id === id);
+    if (!a) return;
+    const st = stepsOf(a);
+    const done = st.filter((x) => x.done).length;
+    const leaf = !hasKids(a.id);
+    const body = `<p class="muted small">${esc(a.title)}</p>
+      <div class="steps-sum">${bar(st.length ? (done / st.length) * 100 : 0)}<span class="small nowrap">${done}/${st.length} done</span></div>
+      <ul class="checklist steps">${st.map((x) => `<li><label><input type="checkbox" data-change="step-toggle" data-id="${a.id}" data-step="${x.id}"${x.done ? ' checked' : ''}><span>${esc(x.text)}</span></label><button type="button" class="icon-btn" data-act="step-del" data-id="${a.id}" data-step="${x.id}" aria-label="Delete sub-step">×</button></li>`).join('') || '<li class="muted small">No sub-steps yet — add the first granular, doable step below.</li>'}</ul>
+      <form id="stepForm" class="step-add" data-id="${a.id}"><input name="text" placeholder="e.g. Verify PLC IP &amp; subnet" aria-label="New sub-step" autocomplete="off"><button class="btn primary" type="submit">Add</button></form>
+      <label class="auto-sync"><input type="checkbox" data-change="step-auto" data-id="${a.id}"${a.autoProgress ? ' checked' : ''}${leaf ? '' : ' disabled'}> Auto-calculate progress % from completed sub-steps${leaf ? '' : ' (not available on actions that have sub-actions)'}</label>
+      <div class="modal-actions"><button type="button" class="btn ghost" data-act="modal-close">Done</button></div>`;
+    openModal({ title: 'Sub-steps', body });
+    const f = $(keep || '#stepForm input[name=text]');
+    if (f && f.focus) f.focus();
+  }
+
+  async function stepsEdit(id, fn, keep) {
+    const a = S.actions.find((x) => x.id === id);
+    if (!a) return;
+    const rec = Object.assign({}, a, { steps: stepsOf(a).map((x) => Object.assign({}, x)) });
+    fn(rec);
+    syncSteps(rec);
+    await save('actions', rec);
+    render();
+    openSteps(id, keep);
+  }
+
+  /* ---------- Help & user guide ---------- */
+  const HELP_TABS = [
+    { k: 'quick', l: 'Quick-Start Workflow' },
+    { k: 'ref', l: 'Button & Feature Reference' },
+    { k: 'pwa', l: 'Offline & Installation' },
+    { k: 'keys', l: 'Keyboard Shortcuts' }
+  ];
+
+  function helpPane(tab) {
+    if (tab === 'ref') {
+      const rows = [
+        ['Auto-Generate SCADA WBS Template', 'Adds the five standard Wonderware SCADA phases, each with dated sub-actions, hours and a default engineer. Edit or delete anything afterwards.'],
+        ['Kanban vs List', 'Kanban groups actions into Backlog / In Progress / Commissioning / Blocked / Completed with progress sliders. List shows the same actions as a sortable-style table with the phase hierarchy.'],
+        ['+ Sub-step', 'Opens a micro-step checklist for an action. Tick "Auto-calculate progress" to drive the progress % from completed sub-steps.'],
+        ['Split', 'Decomposes an action into dated sub-actions (one per line as "Title | hours"). Parent progress rolls up from them automatically.'],
+        ['Reset All Filters', 'Clears search and the Phase / Assignee / Status filters. Filters also reset when you switch project.'],
+        ['Committed Spend vs BOM Estimate', 'BOM Estimate is the price of every line item. Committed Spend counts only items already Ordered, Delivered or Installed.'],
+        ['Escalate to PM', 'Marks a blocker Escalated, records the Project Manager and date. "Copy escalation note" gives a ready-to-send summary.'],
+        ['Load QA/QHSE Checklists', 'Appears when a project has no FAT / SAT / QHSE (Annexure-SCT-HR-001) checklist items; loads the standard set.'],
+        ['Copy Snippet/Config', 'Copies the body of a protocol, OPC, Modbus, QuickScript or SQL log entry to the clipboard.'],
+        ['Data → Export Project Report', 'Downloads the active project and its computed KPIs as JSON.'],
+        ['Data → Printable Executive Summary', 'Opens the print dialog with a clean status report (Save as PDF to share).'],
+        ['Data → Full Backup / Import JSON', 'Backup saves every project. Import merges a project report or replaces everything with a full backup.'],
+        ['Data → Reset to Demo Data', 'Replaces all data with the sample Dubai projects. Cannot be undone.']
+      ];
+      return `<table class="help-table"><thead><tr><th>Control</th><th>What it does</th></tr></thead><tbody>${rows.map((r) => `<tr><th scope="row">${esc(r[0])}</th><td>${esc(r[1])}</td></tr>`).join('')}</tbody></table>`;
+    }
+    if (tab === 'pwa') {
+      return `<ul class="guide-cards">
+        <li><span class="n">A</span><div><h4>Android (Chrome)</h4><p>Tap <b>Install App</b> in the banner, or Chrome menu → <b>Install app</b> / <b>Add to Home screen</b>.</p></div></li>
+        <li><span class="n">i</span><div><h4>iPhone / iPad (Safari)</h4><p>Tap <b>Share</b> → <b>Add to Home Screen</b> → Add. It must be opened in Safari.</p></div></li>
+        <li><span class="n">PC</span><div><h4>Desktop (Chrome / Edge)</h4><p>Click the install icon in the address bar, or the <b>Install App</b> button in the sidebar.</p></div></li>
+        <li><span class="n">DB</span><div><h4>Offline storage</h4><p>All projects are stored in IndexedDB on <b>this device and browser</b> (with a localStorage safety copy). The app shell is cached, so it opens with no network. Data is not synced between devices.</p></div></li>
+        <li><span class="n">⇩</span><div><h4>Backups</h4><p>Use <b>Data → Full Backup</b> regularly and <b>Import JSON Backup</b> to move work to another device. Clearing site data erases local projects.</p></div></li>
+      </ul>`;
+    }
+    if (tab === 'keys') {
+      const rows = [['/', 'Focus the search box'], ['n', 'New action'], ['b', 'Record a blocker'], ['h or ?', 'Open this Help & Guide'], ['1 – 5', 'Switch tab (Dashboard, Actions, BOM, Resources, Docs)'], ['Esc', 'Close dialog or tour'], ['← / →', 'Previous / next step during the tour']];
+      return `<table class="help-table"><thead><tr><th>Key</th><th>Action</th></tr></thead><tbody>${rows.map((r) => `<tr><th scope="row"><kbd>${esc(r[0])}</kbd></th><td>${esc(r[1])}</td></tr>`).join('')}</tbody></table><p class="muted small">Shortcuts are ignored while you are typing in a field or a dialog is open.</p>`;
+    }
+    return `<ol class="guide-cards">
+      <li><span class="n">1</span><div><h4>Project &amp; WBS setup</h4><p>On the Dashboard click <b>New Project</b> (client, objective, scope, deadline, AED budget), then <b>Auto-Generate SCADA WBS Template</b> to create the five phases from site survey to client training.</p></div></li>
+      <li><span class="n">2</span><div><h4>Break scope into doable sub-actions</h4><p>In <b>Doable Actions &amp; Schedule</b> use <b>Split</b> for dated sub-actions and <b>+ Sub-step</b> for tick-off micro-steps (e.g. verify PLC IP &amp; subnet, configure OI Server topic, test tag quality). Drag the progress slider or let sub-steps calculate it.</p></div></li>
+      <li><span class="n">3</span><div><h4>Site survey &amp; BOM procurement</h4><p>In <b>Equipment, BOM &amp; Procurement</b> add each item with quantity, AED unit cost, vendor, lead time and survey risk notes. Move the status Specified → RFQ Sent → Ordered → Delivered → Installed.</p></div></li>
+      <li><span class="n">4</span><div><h4>Log hours &amp; escalate blockers</h4><p>In <b>Resources, Hours &amp; Blockers</b> log timesheets to see AED burn against scope completion. Record a blocker, set severity, then <b>Escalate to PM</b>.</p></div></li>
+      <li><span class="n">5</span><div><h4>FAT/SAT, QHSE &amp; handover</h4><p>In <b>Docs, SQL/OPC Logs &amp; QHSE</b> tick FAT, SAT and Annexure-SCT-HR-001 items, move documents to Approved / Handed Over, then use <b>Data → Printable Executive Summary</b> for the handover pack.</p></div></li>
+    </ol>`;
+  }
+
+  function openHelp(tab) {
+    const t = HELP_TABS.some((x) => x.k === tab) ? tab : 'quick';
+    openModal({
+      title: 'Help & Guide — Engineering Operations Manual', wide: true,
+      body: `<div class="help-tabs" role="tablist" aria-label="Help sections">${HELP_TABS.map((x) => `<button type="button" role="tab" id="ht-${x.k}" aria-selected="${x.k === t}" data-act="help-tab" data-t="${x.k}">${esc(x.l)}</button>`).join('')}</div>
+        <div class="help-pane" role="tabpanel" aria-labelledby="ht-${t}">${helpPane(t)}</div>
+        <div class="modal-actions"><button type="button" class="btn primary" data-act="start-tour">Start 60-Second Interactive Tour</button><button type="button" class="btn ghost" data-act="modal-close">Close</button></div>`
+    });
+    const on = $(`#ht-${t}`);
+    if (on) on.focus();
+  }
+
+  /* ---------- Interactive spotlight tour ---------- */
+  const TOUR = [
+    { view: 'dashboard', sel: '#projectSwitch', title: 'Project selector', text: 'Switch between client projects here. Filters reset automatically each time you change project.' },
+    { view: 'dashboard', sel: '.kpi-grid', title: 'KPI cards', text: 'Scope completion, active blockers, BOM procurement, hours and AED burn, and QHSE compliance — calculated live from your data.' },
+    { view: 'dashboard', sel: '[data-act="wbs-template"]', title: 'WBS auto-generator', text: 'One click adds the five standard Wonderware SCADA phases with dated sub-actions. Phase headers below collapse and expand.' },
+    { view: 'actions', sel: '.toolbar', title: 'Action filters', text: 'Filter by phase, assignee and status, flip between Kanban and List, and use Reset All Filters at any time. Each card has + Sub-step for micro-steps.' },
+    { view: 'bom', sel: '.table-wrap', title: 'BOM & procurement table', text: 'Track quantity, AED cost, vendor, lead time and site-survey risk notes. Change the status inline to update Committed Spend.' },
+    { view: 'resources', sel: '.blockers', title: 'Blocker escalation', text: 'Record what is blocking progress, its impact and the support you need, then Escalate to PM to log who was told and when.' },
+    { view: 'docs', sel: '.qa-grid', title: 'FAT / SAT / QHSE checklists', text: 'Tick items to raise your Annexure-SCT-HR-001 compliance score. Below, the script register stores OPC, Modbus and SQL snippets you can copy in one click.' }
+  ];
+  let tourIdx = -1;
+
+  function endTour() {
+    const t = $('#tour');
+    if (t) t.remove();
+    const was = tourIdx;
+    tourIdx = -1;
+    try { localStorage.setItem(LS_TOUR, '1'); } catch (e) { /* ignore */ }
+    if (was >= 0) setView('dashboard');
+  }
+
+  function positionTour() {
+    const root = $('#tour');
+    if (!root || tourIdx < 0) return;
+    const step = TOUR[tourIdx];
+    const target = $(step.sel);
+    const spot = root.querySelector('.tour-spot');
+    const card = root.querySelector('.tour-card');
+    const vw = window.innerWidth || document.documentElement.clientWidth || 360;
+    const vh = window.innerHeight || document.documentElement.clientHeight || 640;
+    const cw = card.offsetWidth || 340;
+    const ch = card.offsetHeight || 180;
+    root.classList.toggle('nospot', !target);
+    if (!target) {
+      spot.style.display = 'none';
+      card.style.top = `${Math.max(12, (vh - ch) / 2)}px`;
+      card.style.left = `${Math.max(12, (vw - cw) / 2)}px`;
+      return;
+    }
+    const r = target.getBoundingClientRect();
+    const pad = 6;
+    const top = Math.max(r.top - pad, 4);
+    const left = Math.max(r.left - pad, 4);
+    spot.style.display = 'block';
+    spot.style.top = `${top}px`;
+    spot.style.left = `${left}px`;
+    spot.style.width = `${Math.max(Math.min(r.width + pad * 2, vw - left - 4), 20)}px`;
+    spot.style.height = `${Math.max(Math.min(r.height + pad * 2, vh - top - 4), 20)}px`;
+    let cy = r.bottom + 14;
+    if (cy + ch > vh - 12) cy = r.top - ch - 14;
+    if (cy < 12) cy = Math.max(12, vh - ch - 12);
+    card.style.top = `${cy}px`;
+    card.style.left = `${Math.min(Math.max(r.left, 12), Math.max(12, vw - cw - 12))}px`;
+  }
+
+  function showTourStep() {
+    const step = TOUR[tourIdx];
+    if (UI.view !== step.view) setView(step.view);
+    let root = $('#tour');
+    if (!root) {
+      root = document.createElement('div');
+      root.id = 'tour';
+      root.className = 'tour';
+      root.innerHTML = '<div class="tour-spot"></div><div class="tour-card" role="dialog" aria-label="Interactive tour" aria-live="polite"></div>';
+      document.body.appendChild(root);
+    }
+    const last = tourIdx === TOUR.length - 1;
+    root.querySelector('.tour-card').innerHTML = `<div class="tour-step">Step ${tourIdx + 1} of ${TOUR.length}</div><h3>${esc(step.title)}</h3><p>${esc(step.text)}</p>
+      <div class="tour-actions"><button type="button" class="link-btn" data-act="tour-skip">Skip Tour</button><span class="spacer"></span>
+      <button type="button" class="btn ghost sm" data-act="tour-prev"${tourIdx === 0 ? ' disabled' : ''}>Previous</button><button type="button" class="btn primary sm" data-act="tour-next">${last ? 'Finish' : 'Next'}</button></div>`;
+    const target = $(step.sel);
+    if (target && typeof target.scrollIntoView === 'function') target.scrollIntoView({ block: 'center', behavior: 'auto' });
+    positionTour();
+    const nb = root.querySelector('[data-act="tour-next"]');
+    if (nb) nb.focus();
+  }
+
+  function startTour() {
+    closeModal();
+    tourIdx = 0;
+    showTourStep();
+  }
+  function tourNext() {
+    if (tourIdx < 0) return;
+    if (tourIdx >= TOUR.length - 1) { endTour(); toast('Tour complete — press H any time for the guide.', 'ok'); return; }
+    tourIdx += 1;
+    showTourStep();
+  }
+  function tourPrev() {
+    if (tourIdx <= 0) return;
+    tourIdx -= 1;
+    showTourStep();
+  }
+
+  function maybeWelcome() {
+    let seen = '1';
+    try { seen = localStorage.getItem(LS_TOUR); } catch (e) { /* storage blocked: skip welcome */ }
+    if (seen) return;
+    try { localStorage.setItem(LS_TOUR, '1'); } catch (e) { /* ignore */ }
+    setTimeout(() => {
+      if ($('#modalRoot').firstChild || !P()) return;
+      openModal({
+        title: 'Welcome to ScopeTracker Pro',
+        body: `<p>Take a 60-second tour of the five workspaces, or open the full guide. You can reopen it any time with the <b>? Help &amp; Guide</b> button or the <kbd>H</kbd> key.</p>
+          <div class="modal-actions"><button type="button" class="btn ghost" data-act="modal-close">Skip</button><button type="button" class="btn ghost" data-act="help">Open Guide</button><button type="button" class="btn primary" data-act="start-tour">Start 60-Second Tour</button></div>`
+      });
+    }, 700);
+  }
+
+  /* ---------- Keyboard shortcuts ---------- */
+  function onKey(e) {
+    if (tourIdx >= 0) {
+      if (e.key === 'Escape') { endTour(); return; }
+      if (e.key === 'ArrowRight') { tourNext(); return; }
+      if (e.key === 'ArrowLeft') { tourPrev(); return; }
+    }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const t = e.target;
+    const typing = t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+    if (typing || tourIdx >= 0 || $('#modalRoot').firstChild) return;
+    const order = ['dashboard', 'actions', 'bom', 'resources', 'docs'];
+    if (e.key === '/') { e.preventDefault(); const si = $('#globalSearch'); if (si) si.focus(); }
+    else if (e.key === 'n' || e.key === 'N') { if (P()) { e.preventDefault(); actionForm(null); } }
+    else if (e.key === 'b' || e.key === 'B') { if (P()) { e.preventDefault(); blockerForm(null); } }
+    else if (e.key === 'h' || e.key === 'H' || e.key === '?') { e.preventDefault(); openHelp('quick'); }
+    else if (/^[1-5]$/.test(e.key)) { setView(order[Number(e.key) - 1]); }
+  }
+
   const byId = (store, id) => S[store].find((r) => r.id === id);
 
   const H = {
     'modal-close': () => closeModal(),
+    help: () => openHelp('quick'),
+    'help-tab': (d) => openHelp(d.t),
+    'start-tour': () => startTour(),
+    'tour-next': () => tourNext(),
+    'tour-prev': () => tourPrev(),
+    'tour-skip': () => endTour(),
+    steps: (d) => openSteps(d.id),
+    'step-del': (d) => stepsEdit(d.id, (rec) => { rec.steps = rec.steps.filter((x) => x.id !== d.step); }),
+    'toggle-phase': (d) => { UI.collapsed[d.key] = !UI.collapsed[d.key]; render(); },
+    'phase-all': (d) => { PHASES.map((p) => p.key).concat(['_']).forEach((k) => { UI.collapsed[k] = d.v === 'close'; }); render(); },
+    'copy-note': async (d) => { const n = byId('notes', d.id); if (!n) return; const ok = await copyText(n.body); toast(ok ? 'Snippet copied to clipboard.' : 'Copy blocked by the browser — select the text and copy manually.', ok ? 'ok' : 'error'); },
     'new-project': () => projectForm(null),
     'edit-project': () => projectForm(P()),
     'delete-project': async () => {
@@ -1306,6 +1617,7 @@
       for (const s of ['actions', 'bom', 'hours', 'blockers', 'qhse', 'docs', 'notes']) for (const r of S[s].filter((x) => x.projectId === p.id)) await remove(s, r.id);
       await remove('projects', p.id);
       UI.projectId = (S.projects[0] || {}).id || null;
+      resetFilters(true);
       try { localStorage.setItem(LS_PROJECT, UI.projectId || ''); } catch (e) { /* ignore */ }
       render(); toast('Project deleted.');
     },
@@ -1331,7 +1643,7 @@
       render(); toast('Action deleted.');
     },
     layout: (d) => { UI.layout = d.v; render(); },
-    'clear-filters': () => { UI.phase = ''; UI.assignee = ''; UI.status = ''; UI.bomStatus = ''; UI.noteCat = ''; UI.q = ''; const s = $('#globalSearch'); if (s) s.value = ''; render(); },
+    'clear-filters': () => { resetFilters(false); render(); },
     'new-bom': () => bomForm(null),
     'edit-bom': (d) => bomForm(byId('bom', d.id)),
     'delete-bom': async (d) => { if (confirmBox('Delete this BOM item?')) { await remove('bom', d.id); render(); } },
@@ -1381,6 +1693,7 @@
       if (!confirmBox('Replace all data with the demo workspace? Your current data will be lost.')) return;
       await replaceAll(buildSeed());
       UI.projectId = S.projects[0].id;
+      resetFilters(true);
       try { localStorage.setItem(LS_PROJECT, UI.projectId); } catch (e) { /* ignore */ }
       render(); toast('Demo data restored.', 'ok');
     }
@@ -1407,7 +1720,9 @@
     },
     'bom-status': async (d, el) => { await save('bom', Object.assign({}, byId('bom', d.id), { status: el.value })); render(); },
     'doc-status': async (d, el) => { await save('docs', Object.assign({}, byId('docs', d.id), { status: el.value })); render(); },
-    'qa-toggle': async (d, el) => { await save('qhse', Object.assign({}, byId('qhse', d.id), { checked: el.checked })); render(); }
+    'qa-toggle': async (d, el) => { await save('qhse', Object.assign({}, byId('qhse', d.id), { checked: el.checked })); render(); },
+    'step-toggle': (d, el) => stepsEdit(d.id, (rec) => { const x = rec.steps.find((y) => y.id === d.step); if (x) x.done = el.checked; }, `input[data-step="${d.step}"]`),
+    'step-auto': (d, el) => stepsEdit(d.id, (rec) => { rec.autoProgress = el.checked; }, 'input[data-change="step-auto"]')
   };
 
   function bindEvents() {
@@ -1437,12 +1752,24 @@
       }
     });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('#modalRoot').firstChild) closeModal(); });
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('submit', async (e) => {
+      const f = e.target;
+      if (!f || f.id !== 'stepForm') return;
+      e.preventDefault();
+      const text = String(f.elements.text.value || '').trim();
+      if (!text) return;
+      await stepsEdit(f.dataset.id, (rec) => { rec.steps.push({ id: uid('stp'), text, done: false }); });
+    });
+    window.addEventListener('resize', positionTour);
+    window.addEventListener('scroll', positionTour, { passive: true });
     document.addEventListener('click', (e) => {
       const menu = $('#dataMenu');
       if (menu && menu.open && !menu.contains(e.target)) menu.open = false;
     });
     $('#projectSwitch').addEventListener('change', (e) => {
       UI.projectId = e.target.value || null;
+      resetFilters(true);
       try { localStorage.setItem(LS_PROJECT, UI.projectId || ''); } catch (err) { /* ignore */ }
       render();
     });
@@ -1513,8 +1840,10 @@
       });
       setInterval(() => reg.update().catch(() => {}), 60 * 60 * 1000);
     }).catch((err) => console.warn('Service worker registration failed', err));
+    // Reload only when an existing worker is replaced by an update — never on the very first install.
     let refreshing = false;
-    navigator.serviceWorker.addEventListener('controllerchange', () => { if (refreshing) return; refreshing = true; location.reload(); });
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (!hadController || refreshing) return; refreshing = true; location.reload(); });
   }
 
   function handleShortcuts() {
@@ -1547,11 +1876,12 @@
     setupInstall();
     render();
     handleShortcuts();
+    maybeWelcome();
     registerSW();
     if (navigator.storage && navigator.storage.persist) { navigator.storage.persist().catch(() => {}); }
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 
-  window.ScopeTracker = { state: S, ui: UI, metrics, render, setView };
+  window.ScopeTracker = { state: S, ui: UI, metrics, render, setView, openHelp, startTour };
 })();

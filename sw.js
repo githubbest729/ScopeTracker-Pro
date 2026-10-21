@@ -1,7 +1,7 @@
 /* ScopeTracker Pro — Service Worker */
 'use strict';
 
-const VERSION = 'scopetracker-pro-v1';
+const VERSION = 'scopetracker-pro-v2';
 const CORE_ASSETS = [
   './',
   './index.html',

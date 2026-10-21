@@ -336,3 +336,49 @@ summary.btn::-webkit-details-marker { display: none; }
   .report ul { margin: 0; padding-left: 18px; columns: 2; font-size: 9.5pt; list-style: none; }
   .report tr, .report li { break-inside: avoid; }
 }
+
+/* ---------- v2: help, tour, filters, sub-steps ---------- */
+.help-btn { border-color: rgba(34, 211, 238, .55); color: var(--cyan); background: rgba(34, 211, 238, .08); }
+.help-btn:hover { background: rgba(34, 211, 238, .16); }
+.help-btn > span:first-child { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--cyan); color: #00212b; font-weight: 800; }
+.help-tabs { display: flex; gap: 2px; flex-wrap: wrap; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
+.help-tabs button { background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--muted); padding: 9px 12px; cursor: pointer; font: 600 13px/1.2 inherit; }
+.help-tabs button:hover { color: var(--text); }
+.help-tabs button[aria-selected="true"] { color: var(--cyan); border-bottom-color: var(--cyan); }
+.help-pane { max-height: 52vh; overflow: auto; padding-right: 4px; }
+.guide-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.guide-cards li { display: flex; gap: 12px; align-items: flex-start; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.guide-cards .n { flex: none; min-width: 30px; height: 30px; padding: 0 4px; border-radius: 15px; background: rgba(34, 211, 238, .15); color: var(--cyan); display: grid; place-items: center; font: 700 13px ui-monospace, Menlo, Consolas, monospace; }
+.guide-cards h4 { margin-bottom: 3px; font-size: 14px; }
+.guide-cards p { margin: 0; color: #c4d2ea; }
+.help-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.help-table th, .help-table td { text-align: left; vertical-align: top; padding: 9px 10px; border-bottom: 1px solid rgba(36, 53, 86, .7); }
+.help-table thead th { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+.help-table tbody th { width: 34%; font-weight: 600; }
+.help-table td { color: #c4d2ea; }
+kbd { font: 600 12px ui-monospace, Menlo, Consolas, monospace; background: #0a1224; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 6px; padding: 2px 7px; color: var(--text); }
+.filter-note { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; padding: 9px 14px; margin-bottom: 12px; border-radius: 10px; background: rgba(251, 191, 36, .1); border: 1px solid rgba(251, 191, 36, .4); color: #fde68a; }
+.toolbar + .filter-note { margin: 0; }
+.link-btn { background: transparent; border: 0; color: var(--cyan); cursor: pointer; font: 600 13px/1 inherit; text-decoration: underline; padding: 6px 4px; }
+.steps-pill { display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 999px; font: 600 11px/1.6 ui-monospace, Menlo, Consolas, monospace; color: var(--blue); border: 1px solid rgba(56, 189, 248, .4); background: rgba(56, 189, 248, .08); white-space: nowrap; }
+.steps-pill.full { color: var(--green); border-color: rgba(52, 211, 153, .45); background: rgba(52, 211, 153, .1); }
+.phase-toggle { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; background: transparent; border: 0; color: inherit; cursor: pointer; text-align: left; padding: 2px 0; font: inherit; }
+.phase-toggle h3 { font-size: 14px; }
+.chev { color: var(--cyan); width: 14px; flex: none; }
+.phase.collapsed .phase-head { border-bottom: 0; }
+.steps-sum { display: flex; gap: 10px; align-items: center; margin: 8px 0; }
+.steps-sum .bar { flex: 1; }
+.step-add { display: flex; gap: 8px; margin: 12px 0; }
+.auto-sync { display: flex; gap: 8px; align-items: center; font-size: 13px; cursor: pointer; }
+.tour { position: fixed; inset: 0; z-index: 120; }
+.tour.nospot { background: rgba(4, 8, 18, .78); }
+.tour-spot { position: fixed; border-radius: 10px; pointer-events: none; box-shadow: 0 0 0 9999px rgba(4, 8, 18, .78), 0 0 0 2px var(--cyan), 0 0 24px 4px rgba(34, 211, 238, .45); transition: top .2s, left .2s, width .2s, height .2s; }
+.tour-card { position: fixed; width: min(340px, calc(100vw - 24px)); background: var(--surface-3); border: 1px solid var(--cyan); border-radius: 12px; padding: 14px 16px; box-shadow: var(--shadow); }
+.tour-card h3 { font-size: 16px; margin: 2px 0 6px; }
+.tour-card p { color: #c4d2ea; margin: 0 0 12px; }
+.tour-step { font: 700 11px/1 ui-monospace, Menlo, Consolas, monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--cyan); }
+.tour-actions { display: flex; gap: 8px; align-items: center; }
+.btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+input[type=range]:disabled { opacity: .5; }
+@media (max-width: 860px) { .help-pane { max-height: 56vh; } .help-tabs button { padding: 8px 9px; font-size: 12px; } }
+@media print { .tour, .filter-note, .help-btn { display: none !important; } }

@@ -13,6 +13,7 @@
   "dir": "ltr",
   "categories": ["productivity", "business", "utilities"],
   "icons": [
+    { "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
     { "src": "icons/icon-72.png", "sizes": "72x72", "type": "image/png" },
     { "src": "icons/icon-96.png", "sizes": "96x96", "type": "image/png" },
     { "src": "icons/icon-128.png", "sizes": "128x128", "type": "image/png" },
