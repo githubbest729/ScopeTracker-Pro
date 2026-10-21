@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ScopeTracker Pro — SCADA Engineering &amp; Project Manager</title>
+<meta name="description" content="Offline-first project scope, WBS, BOM, resource and QHSE manager for Wonderware/AVEVA SCADA engineers.">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16x16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<meta name="theme-color" content="#0f172a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ScopeTracker">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="i-dash" viewBox="0 0 24 24"><path d="M3 13h8V3H3zm0 8h8v-6H3zm10 0h8V11h-8zm0-18v6h8V3z" fill="currentColor"/></symbol>
+    <symbol id="i-tasks" viewBox="0 0 24 24"><path d="M4 6h10v2H4zm0 5h10v2H4zm0 5h7v2H4zm13.5-5.5 1.4 1.4-4.9 4.9-2.6-2.6 1.4-1.4 1.2 1.2z" fill="currentColor"/></symbol>
+    <symbol id="i-bom" viewBox="0 0 24 24"><path d="M12 2 3 6.5v11L12 22l9-4.5v-11zm0 2.2 5.9 2.9L12 10 6.1 7.1zM5 8.7l6 3v7.6l-6-3zm8 10.6v-7.6l6-3v7.6z" fill="currentColor"/></symbol>
+    <symbol id="i-team" viewBox="0 0 24 24"><path d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm8 0a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM9 13c-3 0-7 1.5-7 4.5V20h14v-2.5C16 14.5 12 13 9 13zm8 0c-.4 0-.8 0-1.2.1 1.4 1 2.2 2.4 2.2 4.4V20h5v-2.5c0-2.7-3.4-4.5-6-4.5z" fill="currentColor"/></symbol>
+    <symbol id="i-docs" viewBox="0 0 24 24"><path d="M6 2h8l6 6v14H6zm7 1.5V9h5.5zM8 13h8v1.6H8zm0 3.5h8v1.6H8z" fill="currentColor"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 6a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 6a2 2 0 1 0 0-4 2 2 0 0 0 0 4z" fill="currentColor"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><path d="M10 3a7 7 0 1 0 4.4 12.4l4.9 4.9 1.4-1.4-4.9-4.9A7 7 0 0 0 10 3zm0 2a5 5 0 1 1 0 10 5 5 0 0 1 0-10z" fill="currentColor"/></symbol>
+  </defs>
+</svg>
+
+<a class="skip-link" href="#view">Skip to content</a>
+
+<div class="shell">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <img src="favicon.svg" alt="" width="36" height="36">
+      <div>
+        <strong>ScopeTracker <em>Pro</em></strong>
+        <small>SCADA Project Manager</small>
+      </div>
+    </div>
+
+    <nav class="nav" aria-label="Primary">
+      <button type="button" data-view="dashboard" title="Dashboard &amp; Scope WBS">
+        <svg class="ico"><use href="#i-dash"/></svg>
+        <span class="lbl-long">1. Dashboard &amp; Scope WBS</span><span class="lbl-short">Dashboard</span>
+      </button>
+      <button type="button" data-view="actions" title="Doable Actions &amp; Schedule">
+        <svg class="ico"><use href="#i-tasks"/></svg>
+        <span class="lbl-long">2. Doable Actions &amp; Schedule</span><span class="lbl-short">Actions</span>
+      </button>
+      <button type="button" data-view="bom" title="Equipment, BOM &amp; Procurement">
+        <svg class="ico"><use href="#i-bom"/></svg>
+        <span class="lbl-long">3. Equipment, BOM &amp; Procurement</span><span class="lbl-short">BOM</span>
+      </button>
+      <button type="button" data-view="resources" title="Resources, Hours &amp; Blockers">
+        <svg class="ico"><use href="#i-team"/></svg>
+        <span class="lbl-long">4. Resources, Hours &amp; Blockers</span><span class="lbl-short">Resources</span>
+      </button>
+      <button type="button" data-view="docs" title="Docs, SQL/OPC Logs &amp; QHSE (Annexure-SCT-HR-001)">
+        <svg class="ico"><use href="#i-docs"/></svg>
+        <span class="lbl-long">5. Docs, SQL/OPC Logs &amp; QHSE <small>(Annexure-SCT-HR-001)</small></span><span class="lbl-short">Docs·QHSE</span>
+      </button>
+    </nav>
+
+    <div class="side-foot">
+      <button type="button" class="btn primary block" id="installBtn" hidden>Install App</button>
+      <div class="net" id="netState" role="status" aria-live="polite">
+        <span class="net-dot"></span><span class="net-text">Online</span>
+      </div>
+      <small class="muted">Al Gurg Automation &amp; Controls · Dubai, U.A.E.</small>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar-title">
+        <h1 id="pageTitle">Dashboard &amp; Scope WBS</h1>
+        <label class="project-switch">
+          <span class="sr-only">Active project</span>
+          <select id="projectSwitch" aria-label="Active project"></select>
+        </label>
+      </div>
+      <div class="topbar-tools">
+        <label class="search">
+          <svg class="ico"><use href="#i-search"/></svg>
+          <input id="globalSearch" type="search" placeholder="Search actions, BOM, blockers, notes…" autocomplete="off" aria-label="Search">
+        </label>
+        <div class="net net-compact" id="netStateTop" role="status" aria-live="polite">
+          <span class="net-dot"></span><span class="net-text">Online</span>
+        </div>
+        <details class="menu" id="dataMenu">
+          <summary class="btn ghost" aria-label="Data and reports menu"><svg class="ico"><use href="#i-menu"/></svg><span class="menu-label">Data</span></summary>
+          <div class="menu-panel">
+            <button type="button" data-act="export-report">Export Project Report (JSON)</button>
+            <button type="button" data-act="print-report">Printable Executive Summary</button>
+            <hr>
+            <button type="button" data-act="export-backup">Full Backup (JSON)</button>
+            <button type="button" data-act="import-json">Import JSON Backup…</button>
+            <hr>
+            <button type="button" data-act="reset-demo" class="danger-text">Reset to Demo Data</button>
+          </div>
+        </details>
+      </div>
+    </header>
+
+    <div class="install-banner" id="installBanner" hidden>
+      <div>
+        <strong id="installTitle">Install ScopeTracker Pro</strong>
+        <span id="installText">Add it to your device for full-screen, offline-ready access to your project workspace.</span>
+      </div>
+      <div class="install-actions">
+        <button type="button" class="btn primary sm" id="installBannerBtn">Install</button>
+        <button type="button" class="btn ghost sm" id="installDismiss">Not now</button>
+      </div>
+    </div>
+
+    <main id="view" tabindex="-1" aria-live="polite"></main>
+  </div>
+</div>
+
+<div id="modalRoot"></div>
+<div id="toastRoot" aria-live="polite"></div>
+
+<div class="update-toast" id="updateToast" role="alert" hidden>
+  <span>A new version of ScopeTracker Pro is ready.</span>
+  <button type="button" class="btn primary sm" id="updateBtn">Update now</button>
+  <button type="button" class="btn ghost sm" id="updateDismiss">Later</button>
+</div>
+
+<input type="file" id="importFile" accept="application/json,.json" hidden>
+<div id="printReport" aria-hidden="true"></div>
+
+<noscript><p style="padding:24px;color:#fff">ScopeTracker Pro requires JavaScript.</p></noscript>
+<script src="js/app.js" defer></script>
+</body>
+</html>

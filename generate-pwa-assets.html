@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>ScopeTracker Pro — PWA Asset Generator</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 28px 20px 60px; background: #0b1220; color: #e6edf7; font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  h1 { margin: 0 0 6px; font-size: 24px; }
+  h2 { margin: 28px 0 10px; font-size: 15px; text-transform: uppercase; letter-spacing: .08em; color: #8fa3c4; }
+  p { color: #9fb2d1; margin: 0 0 10px; }
+  code { background: #16233f; padding: 2px 6px; border-radius: 5px; color: #7dd3fc; }
+  .bar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 16px 0; padding: 14px; background: #111c33; border: 1px solid #243556; border-radius: 12px; }
+  button { cursor: pointer; font: 600 13px/1 inherit; padding: 11px 16px; border-radius: 9px; border: 1px solid #243556; background: #16233f; color: #e6edf7; }
+  button.primary { background: #0284c7; border-color: #0ea5e9; color: #fff; font-size: 14px; padding: 13px 20px; }
+  button:hover { filter: brightness(1.15); }
+  button:disabled { opacity: .5; cursor: wait; }
+  #status { color: #34d399; font: 12px ui-monospace, Menlo, Consolas, monospace; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+  .tile { background: #111c33; border: 1px solid #243556; border-radius: 10px; padding: 10px; display: grid; gap: 8px; justify-items: center; text-align: center; }
+  .tile canvas { max-width: 100%; height: auto; background: repeating-conic-gradient(#1b2c4f 0% 25%, #111c33 0% 50%) 50% / 14px 14px; border-radius: 6px; }
+  .tile small { color: #8fa3c4; word-break: break-all; }
+  .shots { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-start; }
+  .shots canvas { max-width: 100%; height: auto; border: 1px solid #243556; border-radius: 8px; }
+  ol { color: #9fb2d1; padding-left: 20px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>ScopeTracker Pro — PWA Asset Generator</h1>
+  <p>Renders the ScopeTracker emblem on HTML5 canvases and packages every file that <code>manifest.webmanifest</code> and <code>index.html</code> reference.</p>
+
+  <div class="bar">
+    <button class="primary" id="zipBtn" type="button">Download everything as ZIP</button>
+    <button id="filesBtn" type="button">Download files one by one</button>
+    <span id="status" role="status"></span>
+  </div>
+
+  <ol>
+    <li>Click <b>Download everything as ZIP</b>.</li>
+    <li>Unzip into the project root. The ZIP already contains the correct folders: <code>icons/</code>, <code>screenshots/</code>, plus <code>apple-touch-icon.png</code> and <code>favicon.ico</code> at the root.</li>
+    <li>Redeploy (or hard-refresh) so the service worker caches the new icons.</li>
+  </ol>
+
+  <h2>Icons &amp; favicons</h2>
+  <div class="grid" id="iconGrid"></div>
+
+  <h2>Install screenshots</h2>
+  <div class="shots" id="shotGrid"></div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ---------- Emblem drawing ---------- */
+  function rr(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  // Draws the emblem into a (size x size) square. opts.maskable => full-bleed background, content in the inner safe zone.
+  function drawEmblem(ctx, size, opts) {
+    opts = opts || {};
+    var maskable = !!opts.maskable;
+    var rounded = opts.rounded !== false && !maskable;
+    var g = ctx.createLinearGradient(0, 0, size, size);
+    g.addColorStop(0, '#0f172a');
+    g.addColorStop(1, '#0c4a6e');
+    ctx.save();
+    if (rounded) { rr(ctx, 0, 0, size, size, size * 0.22); ctx.clip(); }
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
+
+    var u = size / 64;                       // 64-unit design grid
+    var scale = maskable ? 0.66 : 1;
+    ctx.translate(size / 2, size / 2);
+    ctx.scale(scale, scale);
+    ctx.translate(-size / 2, -size / 2);
+    ctx.lineCap = 'round';
+
+    // gauge track
+    ctx.strokeStyle = '#1e3a5f';
+    ctx.lineWidth = 5 * u;
+    ctx.beginPath(); ctx.arc(32 * u, 34 * u, 19 * u, 0, Math.PI * 2); ctx.stroke();
+    // gauge value arc (matches favicon.svg: 135deg → 405deg gap at bottom)
+    ctx.strokeStyle = '#22d3ee';
+    ctx.beginPath(); ctx.arc(32 * u, 34 * u, 19 * u, Math.PI * 0.7, Math.PI * 2.3); ctx.stroke();
+    // needle
+    ctx.strokeStyle = '#fbbf24';
+    ctx.lineWidth = 3.5 * u;
+    ctx.beginPath(); ctx.moveTo(32 * u, 34 * u); ctx.lineTo(42 * u, 21 * u); ctx.stroke();
+    ctx.fillStyle = '#fbbf24';
+    ctx.beginPath(); ctx.arc(32 * u, 34 * u, 3.6 * u, 0, Math.PI * 2); ctx.fill();
+    // WBS progress bars
+    ctx.fillStyle = '#34d399'; rr(ctx, 16 * u, 50 * u, 10 * u, 3 * u, 1.5 * u); ctx.fill();
+    ctx.fillStyle = '#22d3ee'; rr(ctx, 28 * u, 50 * u, 14 * u, 3 * u, 1.5 * u); ctx.fill();
+    ctx.fillStyle = '#fbbf24'; rr(ctx, 44 * u, 50 * u, 5 * u, 3 * u, 1.5 * u); ctx.fill();
+    ctx.restore();
+  }
+
+  // Mock dashboard for install screenshots
+  function drawScreenshot(ctx, w, h, wide) {
+    ctx.fillStyle = '#0b1220'; ctx.fillRect(0, 0, w, h);
+    var rg = ctx.createRadialGradient(w * 0.15, 0, 10, w * 0.15, 0, w * 0.8);
+    rg.addColorStop(0, '#12315a'); rg.addColorStop(1, 'rgba(11,18,32,0)');
+    ctx.fillStyle = rg; ctx.fillRect(0, 0, w, h);
+
+    var pad = wide ? 28 : 24;
+    var side = wide ? 200 : 0;
+    if (wide) {
+      ctx.fillStyle = '#0a1325'; ctx.fillRect(0, 0, side, h);
+      ctx.strokeStyle = '#243556'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(side + .5, 0); ctx.lineTo(side + .5, h); ctx.stroke();
+      ctx.save(); ctx.translate(18, 18); drawEmblem(ctx, 36, {}); ctx.restore();
+      ctx.fillStyle = '#e6edf7'; ctx.font = '700 15px system-ui, sans-serif'; ctx.fillText('ScopeTracker', 62, 32);
+      ctx.fillStyle = '#22d3ee'; ctx.fillText('Pro', 148, 32);
+      var items = ['Dashboard & WBS', 'Actions & Schedule', 'BOM & Procurement', 'Resources & Blockers', 'Docs & QHSE'];
+      items.forEach(function (t, i) {
+        var y = 80 + i * 44;
+        if (i === 0) { ctx.fillStyle = 'rgba(34,211,238,.12)'; rr(ctx, 12, y - 20, side - 24, 36, 9); ctx.fill(); }
+        ctx.fillStyle = i === 0 ? '#22d3ee' : '#8fa3c4'; ctx.font = '600 13px system-ui, sans-serif'; ctx.fillText(t, 26, y);
+      });
+    }
+    var x0 = side + pad;
+    var cw = w - x0 - pad;
+
+    // header
+    ctx.fillStyle = '#e6edf7'; ctx.font = (wide ? '700 22px' : '700 24px') + ' system-ui, sans-serif';
+    ctx.fillText('Dashboard & Scope WBS', x0, wide ? 48 : 64);
+    ctx.fillStyle = '#8fa3c4'; ctx.font = '13px system-ui, sans-serif';
+    ctx.fillText('Dubai District Cooling Plant — Wonderware System Platform', x0, wide ? 70 : 88, cw);
+
+    // project card
+    var cy = wide ? 92 : 112;
+    ctx.fillStyle = '#111c33'; rr(ctx, x0, cy, cw, 84, 12); ctx.fill();
+    ctx.strokeStyle = '#243556'; ctx.stroke();
+    ctx.fillStyle = '#e6edf7'; ctx.font = '700 14px system-ui, sans-serif'; ctx.fillText('Gulf Thermal Energy Services LLC', x0 + 16, cy + 28);
+    ctx.fillStyle = '#8fa3c4'; ctx.font = '12px system-ui, sans-serif'; ctx.fillText('Business Bay, Dubai, U.A.E.  ·  Budget AED 480,000', x0 + 16, cy + 50, cw - 32);
+    ctx.fillStyle = '#38bdf8'; rr(ctx, x0 + 16, cy + 58, 62, 18, 9); ctx.fill();
+    ctx.fillStyle = '#04283b'; ctx.font = '700 10px system-ui, sans-serif'; ctx.fillText('ACTIVE', x0 + 31, cy + 71);
+
+    // KPI cards
+    var kpis = [
+      ['SCOPE COMPLETION', '38%', 38, '#34d399'],
+      ['ACTIVE BLOCKERS', '3', 75, '#f87171'],
+      ['BOM PROCUREMENT', '61%', 61, '#34d399'],
+      ['HOURS & BUDGET', '49%', 49, '#fbbf24'],
+      ['QHSE COMPLIANCE', '50%', 50, '#fbbf24']
+    ];
+    var cols = wide ? 5 : 2;
+    var gap = 12;
+    var kw = (cw - gap * (cols - 1)) / cols;
+    var kh = wide ? 96 : 100;
+    var ky = cy + 84 + 18;
+    kpis.forEach(function (k, i) {
+      var cx = x0 + (i % cols) * (kw + gap);
+      var cyy = ky + Math.floor(i / cols) * (kh + gap);
+      ctx.fillStyle = '#111c33'; rr(ctx, cx, cyy, kw, kh, 10); ctx.fill();
+      ctx.strokeStyle = '#243556'; ctx.lineWidth = 1; ctx.stroke();
+      ctx.fillStyle = k[3]; ctx.fillRect(cx + 8, cyy, kw - 16, 3);
+      ctx.fillStyle = '#8fa3c4'; ctx.font = '700 10px system-ui, sans-serif'; ctx.fillText(k[0], cx + 12, cyy + 26, kw - 20);
+      ctx.fillStyle = '#e6edf7'; ctx.font = '700 26px ui-monospace, Menlo, Consolas, monospace'; ctx.fillText(k[1], cx + 12, cyy + 58);
+      ctx.fillStyle = '#0a1224'; rr(ctx, cx + 12, cyy + 72, kw - 24, 8, 4); ctx.fill();
+      ctx.fillStyle = k[3]; rr(ctx, cx + 12, cyy + 72, Math.max(8, (kw - 24) * k[2] / 100), 8, 4); ctx.fill();
+    });
+
+    // WBS section
+    var rows = Math.ceil(kpis.length / cols);
+    var wy = ky + rows * (kh + gap) + 8;
+    ctx.fillStyle = '#e6edf7'; ctx.font = '700 15px system-ui, sans-serif'; ctx.fillText('Scope Work Breakdown Structure', x0, wy + 8);
+    var phases = [
+      ['Phase 1: Site Survey, Risk & BOM', 100, '#34d399'],
+      ['Phase 2: SCADA Architecture & HMI', 74, '#38bdf8'],
+      ['Phase 3: PLC Integration & Protocols', 31, '#f87171'],
+      ['Phase 4: Scripting, SQL & Optimization', 0, '#8fa3c4'],
+      ['Phase 5: QA, HSE & Client Training', 0, '#8fa3c4']
+    ];
+    var maxRows = Math.max(2, Math.min(phases.length, Math.floor((h - wy - 40) / 46)));
+    phases.slice(0, maxRows).forEach(function (p, i) {
+      var py = wy + 24 + i * 46;
+      ctx.fillStyle = '#111c33'; rr(ctx, x0, py, cw, 38, 9); ctx.fill();
+      ctx.strokeStyle = '#243556'; ctx.stroke();
+      ctx.fillStyle = '#e6edf7'; ctx.font = '600 12px system-ui, sans-serif'; ctx.fillText(p[0], x0 + 14, py + 23, cw - 150);
+      ctx.fillStyle = '#0a1224'; rr(ctx, x0 + cw - 124, py + 15, 80, 8, 4); ctx.fill();
+      ctx.fillStyle = p[2]; if (p[1] > 0) { rr(ctx, x0 + cw - 124, py + 15, Math.max(6, 80 * p[1] / 100), 8, 4); ctx.fill(); }
+      ctx.fillStyle = '#8fa3c4'; ctx.font = '700 11px ui-monospace, Menlo, Consolas, monospace'; ctx.fillText(p[1] + '%', x0 + cw - 36, py + 23);
+    });
+
+    if (!wide) {
+      // bottom navigation
+      ctx.fillStyle = '#0a1325'; ctx.fillRect(0, h - 74, w, 74);
+      ctx.strokeStyle = '#243556'; ctx.beginPath(); ctx.moveTo(0, h - 74.5); ctx.lineTo(w, h - 74.5); ctx.stroke();
+      ['Dashboard', 'Actions', 'BOM', 'Resources', 'Docs·QHSE'].forEach(function (t, i) {
+        var bx = (w / 5) * i + w / 10;
+        ctx.fillStyle = i === 0 ? '#22d3ee' : '#8fa3c4';
+        ctx.beginPath(); ctx.arc(bx, h - 50, 8, 0, Math.PI * 2); ctx.fill();
+        ctx.textAlign = 'center'; ctx.font = '600 11px system-ui, sans-serif'; ctx.fillText(t, bx, h - 22); ctx.textAlign = 'left';
+      });
+    }
+  }
+
+  /* ---------- Asset manifest (exact paths used by the app) ---------- */
+  var ICON_SPECS = [
+    { path: 'icons/icon-72.png', size: 72 },
+    { path: 'icons/icon-96.png', size: 96 },
+    { path: 'icons/icon-128.png', size: 128 },
+    { path: 'icons/icon-144.png', size: 144 },
+    { path: 'icons/icon-152.png', size: 152 },
+    { path: 'icons/icon-192.png', size: 192 },
+    { path: 'icons/icon-384.png', size: 384 },
+    { path: 'icons/icon-512.png', size: 512 },
+    { path: 'icons/icon-maskable-192.png', size: 192, maskable: true },
+    { path: 'icons/icon-maskable-512.png', size: 512, maskable: true },
+    { path: 'apple-touch-icon.png', size: 180, opaque: true },
+    { path: 'icons/favicon-16x16.png', size: 16 },
+    { path: 'icons/favicon-32x32.png', size: 32 }
+  ];
+  var SHOT_SPECS = [
+    { path: 'screenshots/narrow.png', w: 540, h: 960, wide: false },
+    { path: 'screenshots/wide.png', w: 1280, h: 720, wide: true }
+  ];
+
+  function makeCanvas(w, h) { var c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
+
+  function renderIcon(spec) {
+    var c = makeCanvas(spec.size, spec.size);
+    var ctx = c.getContext('2d');
+    if (spec.opaque) { // iOS applies its own rounding; supply a full-bleed square
+      drawEmblem(ctx, spec.size, { rounded: false });
+    } else {
+      drawEmblem(ctx, spec.size, { maskable: spec.maskable });
+    }
+    return c;
+  }
+
+  function renderShot(spec) {
+    var c = makeCanvas(spec.w, spec.h);
+    drawScreenshot(c.getContext('2d'), spec.w, spec.h, spec.wide);
+    return c;
+  }
+
+  function canvasBlob(c) {
+    return new Promise(function (resolve, reject) {
+      c.toBlob(function (b) { b ? resolve(b) : reject(new Error('toBlob failed')); }, 'image/png');
+    });
+  }
+  function blobBytes(b) { return b.arrayBuffer().then(function (ab) { return new Uint8Array(ab); }); }
+
+  /* ---------- ICO (PNG-compressed entries) ---------- */
+  async function buildIco(sizes) {
+    var pngs = [];
+    for (var i = 0; i < sizes.length; i++) {
+      var s = sizes[i];
+      pngs.push({ size: s, data: await blobBytes(await canvasBlob(renderIcon({ size: s })))});
+    }
+    var headerLen = 6 + 16 * pngs.length;
+    var total = headerLen + pngs.reduce(function (t, p) { return t + p.data.length; }, 0);
+    var out = new Uint8Array(total);
+    var dv = new DataView(out.buffer);
+    dv.setUint16(0, 0, true); dv.setUint16(2, 1, true); dv.setUint16(4, pngs.length, true);
+    var offset = headerLen;
+    pngs.forEach(function (p, idx) {
+      var o = 6 + idx * 16;
+      dv.setUint8(o, p.size >= 256 ? 0 : p.size);
+      dv.setUint8(o + 1, p.size >= 256 ? 0 : p.size);
+      dv.setUint8(o + 2, 0); dv.setUint8(o + 3, 0);
+      dv.setUint16(o + 4, 1, true); dv.setUint16(o + 6, 32, true);
+      dv.setUint32(o + 8, p.data.length, true); dv.setUint32(o + 12, offset, true);
+      out.set(p.data, offset);
+      offset += p.data.length;
+    });
+    return out;
+  }
+
+  /* ---------- Minimal ZIP writer (store, no compression) ---------- */
+  var CRC_TABLE = (function () {
+    var t = new Uint32Array(256);
+    for (var n = 0; n < 256; n++) { var c = n; for (var k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; }
+    return t;
+  })();
+  function crc32(buf) {
+    var c = 0xFFFFFFFF;
+    for (var i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+  function buildZip(files) {
+    var enc = new TextEncoder();
+    var parts = [];
+    var central = [];
+    var offset = 0;
+    var d = new Date();
+    var dosTime = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
+    var dosDate = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+    files.forEach(function (f) {
+      var name = enc.encode(f.path);
+      var crc = crc32(f.data);
+      var lh = new Uint8Array(30 + name.length);
+      var v = new DataView(lh.buffer);
+      v.setUint32(0, 0x04034b50, true); v.setUint16(4, 20, true); v.setUint16(6, 0x0800, true); v.setUint16(8, 0, true);
+      v.setUint16(10, dosTime, true); v.setUint16(12, dosDate, true); v.setUint32(14, crc, true);
+      v.setUint32(18, f.data.length, true); v.setUint32(22, f.data.length, true); v.setUint16(26, name.length, true); v.setUint16(28, 0, true);
+      lh.set(name, 30);
+      parts.push(lh, f.data);
+      var ch = new Uint8Array(46 + name.length);
+      var c = new DataView(ch.buffer);
+      c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true); c.setUint16(10, 0, true);
+      c.setUint16(12, dosTime, true); c.setUint16(14, dosDate, true); c.setUint32(16, crc, true);
+      c.setUint32(20, f.data.length, true); c.setUint32(24, f.data.length, true); c.setUint16(28, name.length, true);
+      c.setUint32(42, offset, true);
+      ch.set(name, 46);
+      central.push(ch);
+      offset += lh.length + f.data.length;
+    });
+    var cdSize = central.reduce(function (t, x) { return t + x.length; }, 0);
+    var end = new Uint8Array(22);
+    var e = new DataView(end.buffer);
+    e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true);
+    e.setUint32(12, cdSize, true); e.setUint32(16, offset, true);
+    return new Blob(parts.concat(central, [end]), { type: 'application/zip' });
+  }
+
+  /* ---------- Downloading ---------- */
+  function saveBlob(blob, name) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+  }
+
+  async function collectFiles() {
+    var files = [];
+    for (var i = 0; i < ICON_SPECS.length; i++) {
+      var s = ICON_SPECS[i];
+      files.push({ path: s.path, data: await blobBytes(await canvasBlob(renderIcon(s))) });
+    }
+    files.push({ path: 'favicon.ico', data: await buildIco([16, 32, 48]) });
+    for (var j = 0; j < SHOT_SPECS.length; j++) {
+      var sp = SHOT_SPECS[j];
+      files.push({ path: sp.path, data: await blobBytes(await canvasBlob(renderShot(sp))) });
+    }
+    return files;
+  }
+
+  var statusEl = document.getElementById('status');
+  function setStatus(t) { statusEl.textContent = t; }
+
+  document.getElementById('zipBtn').addEventListener('click', async function () {
+    var btn = this; btn.disabled = true; setStatus('Rendering…');
+    try {
+      var files = await collectFiles();
+      saveBlob(buildZip(files), 'scopetracker-pwa-assets.zip');
+      setStatus('Done — ' + files.length + ' files packaged. Unzip into the project root.');
+    } catch (err) { console.error(err); setStatus('Failed: ' + err.message); }
+    btn.disabled = false;
+  });
+
+  document.getElementById('filesBtn').addEventListener('click', async function () {
+    var btn = this; btn.disabled = true; setStatus('Rendering…');
+    try {
+      var files = await collectFiles();
+      for (var i = 0; i < files.length; i++) {
+        var f = files[i];
+        var type = f.path.endsWith('.ico') ? 'image/x-icon' : 'image/png';
+        saveBlob(new Blob([f.data], { type: type }), f.path.split('/').pop());
+        setStatus('Downloading ' + (i + 1) + '/' + files.length + ': ' + f.path);
+        await new Promise(function (r) { setTimeout(r, 350); });
+      }
+      setStatus('Done. Place each file at the path shown in the preview captions (icons/, screenshots/, root).');
+    } catch (err) { console.error(err); setStatus('Failed: ' + err.message); }
+    btn.disabled = false;
+  });
+
+  /* ---------- Preview ---------- */
+  var grid = document.getElementById('iconGrid');
+  ICON_SPECS.forEach(function (s) {
+    var tile = document.createElement('div'); tile.className = 'tile';
+    var c = renderIcon(s); c.style.width = Math.min(s.size, 128) + 'px';
+    var cap = document.createElement('small'); cap.textContent = s.path + ' · ' + s.size + '×' + s.size;
+    tile.appendChild(c); tile.appendChild(cap); grid.appendChild(tile);
+  });
+  var icoTile = document.createElement('div'); icoTile.className = 'tile';
+  var icoC = renderIcon({ size: 48 }); var icoCap = document.createElement('small'); icoCap.textContent = 'favicon.ico · 16/32/48';
+  icoTile.appendChild(icoC); icoTile.appendChild(icoCap); grid.appendChild(icoTile);
+
+  var shots = document.getElementById('shotGrid');
+  SHOT_SPECS.forEach(function (s) {
+    var wrap = document.createElement('div');
+    var c = renderShot(s); c.style.width = (s.wide ? 560 : 240) + 'px';
+    var cap = document.createElement('p'); cap.textContent = s.path + ' · ' + s.w + '×' + s.h;
+    wrap.appendChild(c); wrap.appendChild(cap); shots.appendChild(wrap);
+  });
+})();
+</script>
+</body>
+</html>
